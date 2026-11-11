@@ -684,7 +684,7 @@
       ${proc ? '<div class="notice info"><div>Bitte warten, bis alle Belege erkannt sind.</div></div>' : ''}
       <div class="card list">
         <div class="item" style="cursor:default"><div class="grow"><div class="t">Excel (RB003, Original-Vorlage)</div><div class="s">Blatt 1 + Seite 2 befüllt, alle Formeln bleiben erhalten</div></div></div>
-        <div class="item" style="cursor:default"><div class="grow"><div class="t">PDF mit Einzelnachweisen</div><div class="s">Abrechnung, Belegliste und ${list.filter((r) => r.day).length} nummerierte Belege</div></div></div>
+        <div class="item" style="cursor:default"><div class="grow"><div class="t">PDF mit Einzelnachweisen</div><div class="s">RB003 im Excel-Layout (Blatt 1 + Seite 2), Belegliste und ${list.filter((r) => r.day).length} nummerierte Belege</div></div></div>
       </div>
       <div id="exState"></div>
       <button class="btn primary block" id="exGo" ${proc ? 'disabled' : ''}>Export erstellen</button>`;
@@ -850,7 +850,7 @@
   }
 
   // ---------- Start ----------
-  const APP_VERSION = '1.2.0';
+  const APP_VERSION = '1.3.0';
   async function init() {
     await loadSettings();
     await loadTemplate();

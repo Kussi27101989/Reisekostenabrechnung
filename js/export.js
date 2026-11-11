@@ -19,7 +19,7 @@
   async function buildExcel(ctx) {
     const { zip, agg } = await RB003.buildWorkbook(window.JSZip, ctx.templateBuf, ctx.data, ctx.countries);
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    return { blob, agg, filename: baseName(ctx) + '.xlsx' };
+    return { blob, agg, zip, filename: baseName(ctx) + '.xlsx' };
   }
 
   // ---------- PDF ----------
@@ -63,9 +63,9 @@
     return landscape ? 15 : 15;
   }
 
-  function footer(doc, ctx) {
+  function footer(doc, ctx, skip = 0) {
     const n = doc.getNumberOfPages();
-    for (let i = 1; i <= n; i++) {
+    for (let i = skip + 1; i <= n; i++) {
       doc.setPage(i);
       const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
       doc.setFontSize(6.5); doc.setTextColor(120);
@@ -74,63 +74,17 @@
     }
   }
 
-  async function buildPdf(ctx, agg, receipts, images) {
+  async function buildPdf(ctx, agg, receipts, images, zip) {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
-    const W = doc.internal.pageSize.getWidth();
-    let y = header(doc, ctx, `Reisekostenabrechnung ${MONTHS[ctx.month - 1]} ${ctx.year}`, true);
+    let y;
 
-    // Kopfdaten + Summen
-    doc.setFontSize(8.5);
-    const kv = [['Name', ctx.name || '–'], ['Kostenstelle', ctx.costCenter || '–'], ['Monat/Jahr', `${pad(ctx.month)}/${ctx.year}`], ['Firma', ctx.company || '–']];
-    kv.forEach(([k, v], i) => { doc.setFont('helvetica', 'bold'); doc.text(k + ':', 10, y + i * 4.6); doc.setFont('helvetica', 'normal'); doc.text(String(v), 36, y + i * 4.6); });
-    const sums = [['Summe Brutto-Spalten 1–10', agg.sum1], ['Summe Brutto-Spalten 11–15', agg.sum2], ['Reisekosten insgesamt', agg.total]];
-    sums.forEach(([k, v], i) => {
-      doc.setFont('helvetica', i === 2 ? 'bold' : 'normal'); doc.setFontSize(i === 2 ? 10 : 8.5);
-      doc.text(k, W - 70, y + i * 5); doc.text(eur(v), W - 10, y + i * 5, { align: 'right' });
-    });
-    doc.setFontSize(8.5);
-    y += 22;
-
-    // Reisetage
-    const dayRows = [];
-    for (let d = 1; d <= 31; d++) {
-      const dd = (ctx.data.days || {})[d]; const pd = agg.days[d].pd;
-      if (!dd || pd.hours == null) continue;
-      const meals = [dd.breakfast ? 'F' : '', dd.lunch ? 'M' : '', dd.dinner ? 'A' : ''].filter(Boolean).join('/');
-      dayRows.push([`${pad(d)}.${pad(ctx.month)}.`, `${dd.startH}:${pad(dd.startM || 0)}`, `${dd.endH}:${pad(dd.endM || 0)}`, num(pd.hours, 2), dd.arrival ? 'X' : '', dd.destination || '', pd.country ? pd.country.name : '', meals, typeof pd.display === 'number' ? eur(pd.display) : '–']);
+    // Seiten 1 + 2: die RB003 genau so, wie die Excel gedruckt aussieht
+    const sheets = await window.XlsxPdf.listSheets(zip);
+    for (let i = 0; i < sheets.length; i++) {
+      if (i > 0) doc.addPage('a4', 'landscape');
+      await window.XlsxPdf.renderWorkbookSheet(doc, zip, sheets[i].path, {});
     }
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.text('Reisetage und Verpflegungspauschalen (Spalte 1)', 10, y); y += 2;
-    if (dayRows.length) {
-      dayRows.push({ 0: 'Summe', 8: eur(agg.pauschSum), _bold: true });
-      y = table(doc, 10, y, [
-        { t: 'Tag', w: 15 }, { t: 'Beginn', w: 14 }, { t: 'Ende', w: 14 }, { t: 'Std.', w: 13, align: 'right' }, { t: 'An/Ab', w: 12 },
-        { t: 'Reiseziel (Ort, Firma, Zweck)', w: 110 }, { t: 'Land', w: 48 }, { t: 'Kürz.', w: 14 }, { t: 'Pauschale', w: 22, align: 'right' }], dayRows);
-    } else { doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.text('Keine Reisetage erfasst.', 10, y + 4); y += 6; }
-    y += 6;
-
-    // Spaltensummen
-    const colRows = [];
-    colRows.push(['1', 'Verpflegung Pauschale', eur(agg.pauschSum)]);
-    const order = ['verpflegung', 'uebern_pausch', 'uebernachtung', 'bewirtung', 'geschenk19', 'geschenk7', 'neben19', 'neben7', 'neben0'];
-    for (const k of order) if (agg.col[k]) colRows.push([String(C[k].nr), C[k].label, eur(agg.col[k])]);
-    const dw = ['dw_fuel', 'dw_oel', 'dw_garage', 'dw_pflege', 'dw_reparatur'].reduce((a, k) => a + (agg.col[k] || 0), 0);
-    const mw = (agg.col.mw_fuel || 0) + (agg.col.mw_miete || 0);
-    if (dw) colRows.push(['11', 'Dienstwagen (Kraftstoff, Öl, Garage, Pflege, Reparatur)', eur(dw)]);
-    if (mw) colRows.push(['12', 'Mietwagen (Kraftstoff, Miete)', eur(mw)]);
-    if (agg.privSum) colRows.push(['13', `Privatwagen km-Pauschale (${num(ctx.data.kmRate || 0.3)} €/km)`, eur(agg.privSum)]);
-    if (agg.col.oepnv_bis50) colRows.push(['14', C.oepnv_bis50.label, eur(agg.col.oepnv_bis50)]);
-    if (agg.col.oepnv_ueber50) colRows.push(['15', C.oepnv_ueber50.label, eur(agg.col.oepnv_ueber50)]);
-    colRows.push({ 1: 'Reisekosten insgesamt', 2: eur(agg.total), _bold: true });
-    if (y > 150) { doc.addPage(); y = header(doc, ctx, 'Reisekostenabrechnung – Fortsetzung', true); }
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.text('Summen je Spalte der RB003', 10, y); y += 2;
-    const yAfterCols = table(doc, 10, y, [{ t: 'Sp.', w: 12 }, { t: 'Kostenart', w: 100 }, { t: 'Betrag', w: 28, align: 'right' }], colRows);
-
-    // Unterschrift
-    let sy = Math.max(yAfterCols + 14, y + 20);
-    if (sy > 190) { doc.addPage(); sy = 40; }
-    doc.setDrawColor(120); doc.line(165, sy, 225, sy); doc.line(232, sy, 287, sy);
-    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.text('Datum, Unterschrift Mitarbeiter/in', 165, sy + 4); doc.text('Genehmigt (Vorgesetzte/r)', 232, sy + 4);
 
     // Belegliste
     doc.addPage();
@@ -139,20 +93,6 @@
       r.currency && r.currency !== 'EUR' ? `${num(r.amount)} ${r.currency}` : '', eur(r.amountEur), r.images.length + ' S.']);
     lr.push({ 4: 'Summe Belege', 6: eur(receipts.reduce((a, r) => a + Number(r.amountEur || 0), 0)), _bold: true });
     y = table(doc, 10, y + 1, [{ t: 'Beleg', w: 14 }, { t: 'Datum', w: 20 }, { t: 'Tag', w: 10 }, { t: 'Spalte', w: 38 }, { t: 'Händler / Beschreibung', w: 120 }, { t: 'Fremdw.', w: 24, align: 'right' }, { t: 'Betrag EUR', w: 26, align: 'right' }, { t: 'Seiten', w: 15, align: 'right' }], lr);
-
-    // Fahrzeug (Seite 2)
-    const vr = [];
-    for (let d = 1; d <= 31; d++) {
-      const v = agg.veh[d];
-      if (v.kmStart == null && v.kmEnd == null && v.privKm == null && v.mwBusiness == null && !v.note) continue;
-      vr.push([pad(d) + '.', v.kmStart ?? '', v.kmEnd ?? '', v.dwBusiness ?? '', v.dwPrivate ?? '', v.mwBusiness ?? '', v.mwPrivate ?? '', v.privKm ?? '', v.privAmount != null ? eur(v.privAmount) : '', v.note || '']);
-    }
-    if (vr.length) {
-      y += 8; if (y > 170) { doc.addPage(); y = header(doc, ctx, 'Fahrzeug (Seite 2)', true); }
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.text('Fahrzeug / Kilometer (Seite 2)', 10, y); y += 2;
-      table(doc, 10, y, [{ t: 'Tag', w: 12 }, { t: 'DW km Anf.', w: 22, align: 'right' }, { t: 'DW km Ende', w: 22, align: 'right' }, { t: 'DW gesch.', w: 20, align: 'right' }, { t: 'DW privat', w: 20, align: 'right' },
-        { t: 'MW gesch.', w: 20, align: 'right' }, { t: 'MW privat', w: 20, align: 'right' }, { t: 'Privat-PKW km', w: 26, align: 'right' }, { t: 'km-Pauschale', w: 25, align: 'right' }, { t: 'Notiz', w: 80 }], vr);
-    }
 
     // Einzelnachweise: je Belegbild eine Seite (Hochformat)
     for (const r of receipts) {
@@ -179,7 +119,7 @@
         doc.setDrawColor(200); doc.rect((PW - iw) / 2, top, iw, ih);
       }
     }
-    footer(doc, ctx);
+    footer(doc, ctx, sheets.length); // Formularseiten bleiben wie der Excel-Ausdruck, ohne Zusatz-Fußzeile
     return { blob: doc.output('blob'), filename: baseName(ctx) + '_Belege.pdf' };
   }
 
@@ -193,7 +133,7 @@
       const dataUrl = await blobToDataURL(b); const sz = await imgSize(dataUrl);
       images[id] = { dataUrl, w: sz.w, h: sz.h };
     }
-    const pdf = await buildPdf(ctx, xl.agg, receiptsSorted, images);
+    const pdf = await buildPdf(ctx, xl.agg, receiptsSorted, images, xl.zip);
     return { xlsx: xl, pdf };
   }
 

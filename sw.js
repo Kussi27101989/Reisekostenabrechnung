@@ -1,8 +1,8 @@
 /* Service Worker – App funktioniert nach dem ersten Laden komplett offline */
-const VERSION = 'rk-1.2.0';
+const VERSION = 'rk-1.3.0';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
-  './js/app.js', './js/rb003.js', './js/db.js', './js/ocr.js', './js/export.js', './js/template.js',
+  './js/app.js', './js/rb003.js', './js/xlsxpdf.js', './js/db.js', './js/ocr.js', './js/export.js', './js/template.js',
   './vendor/jszip.min.js', './vendor/jspdf.umd.min.js',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png',
 ];
