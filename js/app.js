@@ -38,7 +38,7 @@
   // ---------- Daten laden/speichern ----------
   async function loadSettings() {
     const s = (await DB.get('settings', 'profile')) || {};
-    S.settings = Object.assign({ name: '', costCenter: '', kmRate: 0.30, ocrMode: 'auto', apiKey: '', aiModel: 'claude-haiku-5-5' }, s);
+    S.settings = Object.assign({ name: '', costCenter: '', kmRate: 0.30, ocrMode: 'auto', apiKey: '', visionKey: '', aiModel: 'claude-haiku-5-5' }, s);
   }
   const saveSettings = () => DB.put('settings', S.settings, 'profile');
 
@@ -276,19 +276,25 @@
     </div>
     <h3>Texterkennung</h3>
     <div class="card form">
-      <div class="field"><label>Modus</label><div class="seg" id="sOcr">
-        <button data-ocr="auto" class="${s.ocrMode === 'auto' ? 'on' : ''}">Automatisch</button>
-        <button data-ocr="ai" class="${s.ocrMode === 'ai' ? 'on' : ''}">Nur KI</button>
-        <button data-ocr="offline" class="${s.ocrMode === 'offline' ? 'on' : ''}">Offline</button>
-        <button data-ocr="manual" class="${s.ocrMode === 'manual' ? 'on' : ''}">Aus</button></div>
-        <div class="hint">${s.ocrMode === 'manual' ? '<b>Manuell:</b> Beleg wird nur fotografiert, du trägst Datum, Betrag und Kategorie selbst ein. Keine Texterkennung, kein API-Key, nichts verlässt das Gerät.' : 'Automatisch: KI-Erkennung, wenn Internet und API-Key vorhanden sind – sonst Offline-Texterkennung auf dem Gerät. „Aus": nur Foto, Daten von Hand eintragen.'}</div></div>
+      <div class="field"><label>Modus</label><select id="sOcrSel">
+        ${[['auto', 'Automatisch (empfohlen)'], ['ai', 'Nur Claude-KI'], ['vision', 'Nur Google Vision'], ['offline', 'Nur offline auf dem Gerät'], ['manual', 'Aus – Daten von Hand eintragen']].map(([v, l]) => `<option value="${v}" ${s.ocrMode === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
+        <div class="hint">${{
+          auto: 'Nutzt der Reihe nach: Claude-KI (wenn Key) → Google Vision (wenn Key) → Offline-Erkennung auf dem Gerät.',
+          ai: 'Claude liest Betrag, Datum, MwSt, Händler und Kategorie aus (ca. 1–2 Cent pro Beleg).',
+          vision: 'Google Vision erkennt den Text sehr genau, auch bei schlechtem Licht. Betrag, Datum und Kategorie ermittelt die App daraus. 1.000 Bilder/Monat kostenlos.',
+          offline: 'Tesseract direkt auf dem Gerät – ohne Internet, ohne Kosten, etwas ungenauer.',
+          manual: 'Beleg wird nur fotografiert, du trägst Datum, Betrag und Kategorie selbst ein. Nichts verlässt das Gerät.',
+        }[s.ocrMode] || ''}</div></div>
+      <div class="field"><label>Google Cloud Vision API-Key</label><input type="password" id="sVKey" value="${h(s.visionKey || '')}" placeholder="AIza…" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="hint">Wird nur auf diesem Gerät gespeichert. Einrichtung: siehe README („Google Vision einrichten").</div></div>
       <div class="field"><label>Claude API-Key</label><input type="password" id="sKey" value="${h(s.apiKey)}" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
         <div class="hint">Wird nur auf diesem Gerät gespeichert. Das Belegbild wird zur Auswertung an die Anthropic-API gesendet (ca. 1–2 Cent pro Beleg). Key erstellen unter console.anthropic.com.</div></div>
       <div class="field"><label>KI-Modell</label><select id="sModel">
         ${['claude-haiku-5-5', 'claude-sonnet-5-5'].map((m) => `<option value="${m}" ${s.aiModel === m ? 'selected' : ''}>${m === 'claude-haiku-5-5' ? 'Claude Haiku – schnell & günstig' : 'Claude Sonnet – genauer bei schwierigen Belegen'}</option>`).join('')}
         ${!['claude-haiku-5-5', 'claude-sonnet-5-5'].includes(s.aiModel) ? `<option value="${h(s.aiModel)}" selected>${h(s.aiModel)}</option>` : ''}
       </select></div>
-      <div class="field"><div class="btns"><button class="btn sm" data-act="test-ai">KI-Verbindung testen</button><button class="btn sm" data-act="warmup">Offline-Erkennung laden</button></div>
+      <div class="field"><div class="btns"><button class="btn sm" data-act="test-ai">Claude testen</button><button class="btn sm" data-act="test-vision">Google Vision testen</button><button class="btn sm" data-act="warmup">Offline-Erkennung laden</button></div>
         <div class="hint" id="ocrStatus">Lädt die Offline-Texterkennung (ca. 15 MB) einmalig vor, damit sie auch ohne Netz funktioniert.</div></div>
     </div>
     <h3>Vorlage</h3>
@@ -724,7 +730,7 @@
     const bind = (id, key, conv = (x) => x) => { const el = $(id, v); if (el) el.onchange = async () => { S.settings[key] = conv(el.value); await saveSettings(); render(); }; };
     bind('#sName', 'name', (x) => x.trim()); bind('#sCost', 'costCenter', (x) => x.trim());
     bind('#sKm', 'kmRate', (x) => parseNum(x) || 0.30); bind('#sKey', 'apiKey', (x) => x.trim()); bind('#sModel', 'aiModel');
-    v.querySelectorAll('[data-ocr]').forEach((b) => (b.onclick = async () => { S.settings.ocrMode = b.dataset.ocr; await saveSettings(); render(); }));
+    bind('#sOcrSel', 'ocrMode'); bind('#sVKey', 'visionKey', (x) => x.trim());
     if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then((e) => { const el = $('#storeInfo'); if (el) el.textContent = `Alle Daten liegen nur auf diesem Gerät · belegt ca. ${(e.usage / 1048576).toFixed(1)} MB`; });
   }
 
@@ -739,6 +745,19 @@
       const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
       const res = await OCR.recognizeAI([blob], S.settings);
       st.innerHTML = `✅ KI-Erkennung funktioniert: ${h(res.merchant || '')} · ${res.total_gross != null ? eur(res.total_gross) : '?'} · ${fmtDate(res.date)} · ${h(C[res.category].short)}`;
+    } catch (e) { st.innerHTML = `❌ ${h(e.message)}`; }
+  }
+  async function testVision() {
+    const st = $('#ocrStatus');
+    if (!S.settings.visionKey) { toast('Bitte zuerst den Google-Vision-Key eintragen'); return; }
+    st.innerHTML = '<span class="spin"></span> Teste Google Vision …';
+    try {
+      const c = document.createElement('canvas'); c.width = 420; c.height = 230; const x = c.getContext('2d');
+      x.fillStyle = '#fff'; x.fillRect(0, 0, 420, 230); x.fillStyle = '#000'; x.font = '22px monospace';
+      ['PARKHAUS DOM KOELN', 'Datum: 12.03.2026', 'Parkgebuehr', 'inkl. 19% MwSt 1,04', 'SUMME EUR   6,50'].forEach((t, i) => x.fillText(t, 20, 38 + i * 40));
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92));
+      const res = await OCR.recognizeVision([blob], S.settings);
+      st.innerHTML = `✅ Google Vision funktioniert: ${res.total_gross != null ? eur(res.total_gross) : '?'} · ${fmtDate(res.date) || 'kein Datum'} · ${h(C[res.category].short)}`;
     } catch (e) { st.innerHTML = `❌ ${h(e.message)}`; }
   }
   async function warmup() {
@@ -759,7 +778,7 @@
   async function backup() {
     toast('Backup wird erstellt …');
     const zip = new JSZip();
-    const settings = Object.assign({}, S.settings, { apiKey: '' });
+    const settings = Object.assign({}, S.settings, { apiKey: '', visionKey: '' });
     const months = {}; for (const k of await DB.keys('months')) months[k] = await DB.get('months', k);
     const receipts = await DB.all('receipts');
     zip.file('daten.json', JSON.stringify({ app: 'reisekosten-rb003', version: APP_VERSION, created: new Date().toISOString(), settings, months, receipts }, null, 1));
@@ -776,9 +795,9 @@
       const zip = await JSZip.loadAsync(await file.arrayBuffer());
       const j = JSON.parse(await zip.file('daten.json').async('string'));
       if (j.app !== 'reisekosten-rb003') throw new Error('Keine Reisekosten-Sicherung');
-      const key = S.settings.apiKey; const tpl = await DB.get('settings', 'template');
+      const key = S.settings.apiKey, vkey = S.settings.visionKey; const tpl = await DB.get('settings', 'template');
       await DB.clearAll();
-      await DB.put('settings', Object.assign({}, j.settings, { apiKey: key }), 'profile'); if (tpl) await DB.put('settings', tpl, 'template');
+      await DB.put('settings', Object.assign({}, j.settings, { apiKey: key, visionKey: vkey }), 'profile'); if (tpl) await DB.put('settings', tpl, 'template');
       for (const [k, m] of Object.entries(j.months || {})) await DB.put('months', m, k);
       for (const r of j.receipts || []) await DB.put('receipts', r);
       for (const name of Object.keys(zip.files).filter((n) => n.startsWith('bilder/') && !zip.files[n].dir)) {
@@ -827,6 +846,7 @@
         case 'zoom': zoomReceipt(id); break;
         case 'breakfast': markBreakfast(id); break;
         case 'test-ai': testAI(); break;
+        case 'test-vision': testVision(); break;
         case 'warmup': warmup(); break;
         case 'tpl-load': $('#fileTemplate').click(); break;
         case 'tpl-reset': DB.del('settings', 'template').then(loadTemplate).then(() => { render(); toast('Integrierte Vorlage aktiv'); }); break;
@@ -850,7 +870,7 @@
   }
 
   // ---------- Start ----------
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
   async function init() {
     await loadSettings();
     await loadTemplate();

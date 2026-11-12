@@ -32,6 +32,24 @@ Wichtig: Immer über das Home-Bildschirm-Symbol arbeiten. Nur dort speichert iOS
 | Offline | Tesseract direkt auf dem Gerät, ohne Internet und ohne Kosten. Kategorie und Betrag bitte kontrollieren. |
 | **Aus (manuell)** | Keine Texterkennung. Nach dem Foto öffnet sich sofort das Eingabeformular, du trägst Datum (vorbelegt mit heute), Betrag und Kategorie selbst ein. Kein API-Key nötig, nichts verlässt das Gerät. Bei Bedarf liest „Text erkennen" einen einzelnen Beleg trotzdem aus. |
 
+| Nur Google Vision | Sehr genaue Texterkennung von Google (auch bei schlechtem Licht/Handschrift), daraus ermittelt die App Betrag, Datum, MwSt und Kategorie. 1.000 Bilder/Monat kostenlos. |
+
+**Automatisch** nutzt der Reihe nach: Claude (wenn Key) → Google Vision (wenn Key) → Offline-Erkennung. Fällt ein Dienst aus, springt die App auf den nächsten.
+
+### Google Vision einrichten (einmalig, ca. 10 Minuten)
+
+1. console.cloud.google.com öffnen, mit Google-Konto anmelden, **neues Projekt** anlegen (z. B. „Reisekosten").
+2. **Abrechnung** aktivieren (Kreditkarte nötig – die ersten 1.000 Bilder pro Monat sind kostenlos, danach 1,50 $ je 1.000).
+3. Menü → *APIs & Dienste* → *Bibliothek* → **„Cloud Vision API"** → *Aktivieren*.
+4. *APIs & Dienste* → *Anmeldedaten* → *Anmeldedaten erstellen* → **API-Schlüssel**.
+5. Schlüssel **einschränken** (wichtig!):
+   - *Anwendungseinschränkungen*: **Websites** → `https://kussi27101989.github.io/*` eintragen.
+   - *API-Einschränkungen*: **Schlüssel einschränken** → nur **Cloud Vision API**.
+6. Empfohlen: *Abrechnung → Budgets & Benachrichtigungen* → Budget z. B. 5 € mit E-Mail-Warnung.
+7. Den Schlüssel (beginnt mit `AIza…`) in der App unter **Einstellungen → Google Cloud Vision API-Key** eintragen → **„Google Vision testen"**.
+
+Hinweis: Die 1.000 Gratis-Bilder gelten pro Abrechnungskonto. Nutzen alle Außendienstler denselben Schlüssel, teilen sie sich das Kontingent.
+
 **API-Key für die KI-Erkennung:** auf console.anthropic.com einen Key erstellen und in den Einstellungen eintragen. Kosten: ca. 1–2 Cent pro Beleg. Der Key bleibt auf dem Gerät. Das Belegbild geht nur zur Auswertung an die Anthropic-API.
 
 Tipp: In den Einstellungen einmal **„Offline-Erkennung laden"** tippen (ca. 15 MB, am besten im WLAN). Danach funktioniert die Texterkennung auch im Funkloch.

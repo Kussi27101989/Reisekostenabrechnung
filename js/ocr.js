@@ -118,6 +118,31 @@ Parken: mit ausgewiesener 19 % MwSt -> "neben19", sonst "neben0". Porto -> "nebe
     return normalize({ ...r, engine: 'KI' });
   }
 
+  // ---------- Google Cloud Vision (Texterkennung in der Cloud) ----------
+  async function recognizeVision(blobs, settings) {
+    if (!settings.visionKey) throw new Error('Kein Google-Vision-API-Key hinterlegt');
+    const requests = [];
+    for (const b of blobs.slice(0, 3)) requests.push({ image: { content: await blobToBase64(b) }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }], imageContext: { languageHints: ['de', 'en', 'fr'] } });
+    const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 45000);
+    let res;
+    try {
+      res = await fetch('https://vision.googleapis.com/v1/images:annotate?key=' + encodeURIComponent(settings.visionKey), {
+        method: 'POST', signal: ctrl.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ requests }),
+      });
+    } finally { clearTimeout(to); }
+    let j = null; try { j = await res.json(); } catch (e) { /* ignore */ }
+    if (!res.ok) throw new Error('Google Vision fehlgeschlagen (HTTP ' + res.status + (j && j.error && j.error.message ? ': ' + j.error.message : '') + ')');
+    const parts = (j.responses || []).map((r) => {
+      if (r.error) throw new Error('Google Vision: ' + r.error.message);
+      return (r.fullTextAnnotation && r.fullTextAnnotation.text) || (r.textAnnotations && r.textAnnotations[0] && r.textAnnotations[0].description) || '';
+    });
+    const text = parts.join('\n');
+    if (!text.trim()) throw new Error('Google Vision hat keinen Text gefunden');
+    const r = parseReceiptText(text);
+    r.confidence = r.total_gross != null && r.date ? 0.75 : 0.4;
+    return normalize({ ...r, engine: 'Google Vision', rawText: text });
+  }
+
   // ---------- Offline-OCR (Tesseract) ----------
   let workerP = null;
   function abs(p) { return new URL(p, location.href).href; }
@@ -227,24 +252,31 @@ Parken: mit ausgewiesener 19 % MwSt -> "neben19", sonst "neben0". Porto -> "nebe
   }
 
   // ---------- Steuerung ----------
-  // mode: 'auto' | 'ai' | 'offline'
+  // mode: 'auto' | 'ai' | 'vision' | 'offline' | 'manual'
+  // Automatisch: Claude-KI → Google Vision → Offline-OCR (je nachdem, welche Keys hinterlegt sind und ob Internet da ist)
   async function recognize(blobs, settings, onProgress) {
     let mode = settings.ocrMode || 'auto';
-    if (mode === 'manual') mode = 'auto'; // „Text erkennen" auf Knopfdruck: KI wenn möglich, sonst offline
-    const aiPossible = !!settings.apiKey && navigator.onLine !== false;
-    if (mode === 'ai' || (mode === 'auto' && aiPossible)) {
-      try { return await recognizeAI(blobs, settings); } catch (e) {
-        if (mode === 'ai') throw e;
-        console.warn(e);
-        const r = await recognizeOffline(blobs, onProgress);
-        r.warning = e.message + ' – Offline-OCR verwendet';
+    if (mode === 'manual') mode = 'auto'; // „Text erkennen" auf Knopfdruck
+    const online = navigator.onLine !== false;
+    const chain = [];
+    if (mode === 'ai') chain.push('ai');
+    else if (mode === 'vision') chain.push('vision');
+    else if (mode === 'offline') chain.push('offline');
+    else { if (settings.apiKey && online) chain.push('ai'); if (settings.visionKey && online) chain.push('vision'); chain.push('offline'); }
+    const warn = [];
+    for (let i = 0; i < chain.length; i++) {
+      try {
+        const r = chain[i] === 'ai' ? await recognizeAI(blobs, settings) : chain[i] === 'vision' ? await recognizeVision(blobs, settings) : await recognizeOffline(blobs, onProgress);
+        if (warn.length) r.warning = warn.join(' · ') + ' – ' + r.engine + ' verwendet';
         return r;
+      } catch (e) {
+        if (i === chain.length - 1) throw e;
+        console.warn(e); warn.push(e.message);
       }
     }
-    return recognizeOffline(blobs, onProgress);
   }
 
   async function warmupOffline(onProgress) { await getWorker(onProgress); await ensurePdfjs(); }
 
-  window.OCR = { fileToImages, recognize, recognizeAI, recognizeOffline, parseReceiptText, warmupOffline, blobToBase64 };
+  window.OCR = { fileToImages, recognize, recognizeAI, recognizeVision, recognizeOffline, parseReceiptText, warmupOffline, blobToBase64 };
 })();
